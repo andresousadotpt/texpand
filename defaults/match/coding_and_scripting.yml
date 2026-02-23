@@ -1,0 +1,10 @@
+matches:
+  - triggers: ["'binsh", "'#!"]
+    replace: "#!/bin/sh"
+    word: true
+  - trigger: "'gsm"
+    replace: "git switch main && git pull origin main"
+    word: true
+  - trigger: "'gpomr"
+    replace: "git pull origin main --rebase"
+    word: true

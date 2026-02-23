@@ -1,0 +1,4 @@
+matches:
+  - trigger: "euros"
+    replace: "€"
+    right_word: true
