@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -12,7 +13,27 @@ import (
 	"github.com/bendahl/uinput"
 )
 
-var version = "dev"
+var (
+	version  = "dev"
+	debugLog bool
+)
+
+func init() {
+	if version == "dev" {
+		if info, ok := debug.ReadBuildInfo(); ok {
+			v := info.Main.Version
+			if v != "" && v != "(devel)" && !strings.Contains(v, "+dirty") {
+				version = strings.TrimPrefix(v, "v")
+			}
+		}
+	}
+}
+
+func dbg(format string, args ...any) {
+	if debugLog {
+		fmt.Fprintf(os.Stderr, "texpand [DEBUG] "+format+"\n", args...)
+	}
+}
 
 func ensureWaylandEnv() {
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
@@ -50,15 +71,24 @@ func run() error {
 	ensureWaylandEnv()
 
 	dir := configDir()
+	dbg("config directory: %s", dir)
 
 	appCfg, err := LoadAppConfig(dir)
 	if err != nil {
 		return fmt.Errorf("load app config: %w", err)
 	}
+	dbg("trigger_mode: %q, default_word_mode: %v", appCfg.TriggerMode, appCfg.DefaultWordMode())
 
 	cfg, err := LoadConfig(dir, appCfg)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	for _, m := range cfg.Matches {
+		mode := "immediate"
+		if m.Word {
+			mode = "word (space)"
+		}
+		dbg("  trigger=%q replace=%q mode=%s", m.Trigger, m.Replace, mode)
 	}
 
 	keyboards, err := FindKeyboards()
@@ -114,8 +144,23 @@ func run() error {
 }
 
 func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
+	args := os.Args[1:]
+
+	// Parse flags
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		switch args[0] {
+		case "--debug", "-d":
+			debugLog = true
+		default:
+			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", args[0])
+			fmt.Fprintf(os.Stderr, "usage: texpand [--debug] [init|version]\n")
+			os.Exit(1)
+		}
+		args = args[1:]
+	}
+
+	if len(args) > 0 {
+		switch args[0] {
 		case "init":
 			dir := configDir()
 			fmt.Printf("texpand: initializing config in %s\n", dir)
@@ -129,7 +174,7 @@ func main() {
 			fmt.Printf("texpand %s\n", version)
 			return
 		default:
-			fmt.Fprintf(os.Stderr, "usage: texpand [init|version]\n")
+			fmt.Fprintf(os.Stderr, "usage: texpand [--debug] [init|version]\n")
 			os.Exit(1)
 		}
 	}

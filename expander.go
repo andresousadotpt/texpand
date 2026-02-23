@@ -62,6 +62,7 @@ func (e *Expander) HandleEvent(ev KeyEvent) {
 
 	// Space: check word-mode matches, then clear buffer
 	if ev.Code == evdev.KEY_SPACE {
+		dbg("space pressed, buffer=%q, checking word-mode matches", e.buf)
 		for _, m := range e.config.Matches {
 			if !m.Word {
 				continue
@@ -69,6 +70,7 @@ func (e *Expander) HandleEvent(ev KeyEvent) {
 			if !strings.HasSuffix(e.buf, m.Trigger) {
 				continue
 			}
+			dbg("word-mode match: trigger=%q → expanding", m.Trigger)
 			replacement := e.resolveReplacement(m)
 			time.Sleep(30 * time.Millisecond)
 			// +1 for the space that was just typed
@@ -97,6 +99,7 @@ func (e *Expander) HandleEvent(ev KeyEvent) {
 	}
 
 	// Check immediate (word:false) matches
+	dbg("key '%s', buffer=%q, checking immediate matches", ch, e.buf)
 	for _, m := range e.config.Matches {
 		if m.Word {
 			continue
@@ -104,6 +107,7 @@ func (e *Expander) HandleEvent(ev KeyEvent) {
 		if !strings.HasSuffix(e.buf, m.Trigger) {
 			continue
 		}
+		dbg("immediate match: trigger=%q → expanding", m.Trigger)
 		replacement := e.resolveReplacement(m)
 		time.Sleep(30 * time.Millisecond)
 		e.sendBackspaces(utf8.RuneCountInString(m.Trigger))
