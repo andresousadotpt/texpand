@@ -9,6 +9,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// AppConfig holds global application settings from config.yml.
+type AppConfig struct {
+	TriggerMode string `yaml:"trigger_mode"`
+}
+
+// DefaultWordMode returns the default word-mode value based on TriggerMode.
+// "immediate" → false (fire as typed), anything else → true (fire on space).
+func (a *AppConfig) DefaultWordMode() bool {
+	return a.TriggerMode != "immediate"
+}
+
 // ConfigFile represents a single YAML config file (espanso-compatible).
 type ConfigFile struct {
 	GlobalVars []VarDef   `yaml:"global_vars"`
@@ -33,8 +44,8 @@ type MatchDef struct {
 	Trigger   string   `yaml:"trigger"`
 	Triggers  []string `yaml:"triggers"`
 	Replace   string   `yaml:"replace"`
-	Word      bool     `yaml:"word"`
-	RightWord bool     `yaml:"right_word"`
+	Word      *bool    `yaml:"word"`
+	RightWord *bool    `yaml:"right_word"`
 	Vars      []VarDef `yaml:"vars"`
 }
 
@@ -52,15 +63,36 @@ type Config struct {
 	Matches []Match
 }
 
+// LoadAppConfig reads config.yml from the given config directory.
+// Returns a default config (trigger_mode: space) if the file doesn't exist.
+func LoadAppConfig(dir string) (*AppConfig, error) {
+	cfg := &AppConfig{TriggerMode: "space"}
+
+	data, err := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cfg, nil
+		}
+		return nil, fmt.Errorf("read config.yml: %w", err)
+	}
+
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parse config.yml: %w", err)
+	}
+
+	return cfg, nil
+}
+
 // LoadConfig reads all YAML files from dir/match/ and returns a Config
 // with matches sorted longest-trigger-first.
-func LoadConfig(dir string) (*Config, error) {
+func LoadConfig(dir string, appCfg *AppConfig) (*Config, error) {
 	matchDir := filepath.Join(dir, "match")
 	files, err := filepath.Glob(filepath.Join(matchDir, "*.yml"))
 	if err != nil {
 		return nil, fmt.Errorf("glob config files: %w", err)
 	}
 
+	defaultWord := appCfg.DefaultWordMode()
 	var allMatches []Match
 
 	for _, f := range files {
@@ -80,7 +112,12 @@ func LoadConfig(dir string) (*Config, error) {
 				triggers = md.Triggers
 			}
 
-			word := md.Word || md.RightWord
+			word := defaultWord
+			if md.Word != nil {
+				word = *md.Word
+			} else if md.RightWord != nil {
+				word = *md.RightWord
+			}
 
 			for _, t := range triggers {
 				if t == "" {

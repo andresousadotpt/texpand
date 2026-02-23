@@ -12,7 +12,7 @@ import (
 	"github.com/bendahl/uinput"
 )
 
-var version = "dev"
+var version = "0.2.0"
 
 func ensureWaylandEnv() {
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
@@ -49,7 +49,14 @@ func configDir() string {
 func run() error {
 	ensureWaylandEnv()
 
-	cfg, err := LoadConfig(configDir())
+	dir := configDir()
+
+	appCfg, err := LoadAppConfig(dir)
+	if err != nil {
+		return fmt.Errorf("load app config: %w", err)
+	}
+
+	cfg, err := LoadConfig(dir, appCfg)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

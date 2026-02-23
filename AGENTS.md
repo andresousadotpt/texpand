@@ -15,7 +15,7 @@ main.go           → Entry point, CLI commands (init, version), signal handling
 keyboard.go       → Enumerates /dev/input/ devices, monitors key events via goroutines
 keymap.go         → US/International evdev keycode → character mapping (normal + shifted)
 expander.go       → Rolling keystroke buffer, trigger matching, clipboard paste, virtual keyboard
-config.go         → Loads YAML config files from ~/.config/texpand/match/
+config.go         → Loads app config (config.yml) and YAML match files from ~/.config/texpand/match/
 config_defaults.go→ Embedded default configs (//go:embed), extracted on `texpand init`
 variables.go      → Variable resolution (date type with offset), {{ref}} expansion
 strftime.go       → Strftime token replacement (%Y, %m, %d, etc.)
@@ -24,7 +24,8 @@ strftime.go       → Strftime token replacement (%Y, %m, %d, etc.)
 ### Control flow
 
 ```
-main() → ensureWaylandEnv() → LoadConfig() → FindKeyboards()
+main() → ensureWaylandEnv() → LoadAppConfig() → LoadConfig()
+       → FindKeyboards()
        → MonitorKeyboard() goroutines (one per keyboard) → event channel
        → Expander.HandleEvent() → buffer management → trigger match
        → resolveReplacement() → clipboardPaste() + Ctrl+V
@@ -39,6 +40,7 @@ main() → ensureWaylandEnv() → LoadConfig() → FindKeyboards()
 - **Clipboard preservation** — saves clipboard before paste, restores after
 - **Timing delays** — strategic `time.Sleep` calls (8-50ms) between virtual keyboard operations for app responsiveness
 - **Shift state tracking** — tracks shift key press/release to map correct character (normal vs shifted)
+- **Configurable trigger mode** — `config.yml` sets the default (`space` or `immediate`), individual matches override with `word: true/false`
 
 ## Build and run
 
@@ -46,11 +48,11 @@ main() → ensureWaylandEnv() → LoadConfig() → FindKeyboards()
 go build              # compile
 go install ./...      # install to $GOPATH/bin
 ./texpand             # run (needs input group membership + udev rules)
-./texpand init        # extract default config to ~/.config/texpand/match/
+./texpand init        # extract default config to ~/.config/texpand/
 ./texpand version     # print version
 ```
 
-No Makefile. No test suite currently. Version is set via `var version = "dev"` in `main.go` — override with `-ldflags` at build time.
+No Makefile. No test suite currently. Version is set via `var version` in `main.go`.
 
 ## Dependencies
 
@@ -64,7 +66,17 @@ Runtime: `wl-copy` and `wl-paste` from `wl-clipboard`.
 
 ## Config format
 
-YAML files in `~/.config/texpand/match/*.yml`. Espanso-compatible subset.
+### Global settings (`~/.config/texpand/config.yml`)
+
+```yaml
+# "space" (default) - triggers fire when space is pressed after the trigger
+# "immediate" - triggers fire as soon as the trigger is typed
+trigger_mode: space
+```
+
+### Match files (`~/.config/texpand/match/*.yml`)
+
+Espanso-compatible subset.
 
 ```yaml
 global_vars:
@@ -77,23 +89,24 @@ global_vars:
 matches:
   - trigger: "]a"
     replace: "á"
-    word: false           # immediate mode (default)
+    word: false           # immediate mode (overrides global trigger_mode)
 
   - triggers: ["'binsh", "'#!"]
     replace: "#!/bin/sh"
     word: true            # fires on space
 
   - trigger: "'date"
-    replace: "{{_date}}"  # variable reference
-    word: true
+    replace: "{{_date}}"  # variable reference — uses global default (space)
 ```
 
-- `word: true` / `right_word: true` — match fires on space press
+- `word: true` / `word: false` — override the global `trigger_mode` per match
+- `right_word: true` — alias for `word: true`
 - `$|$` in replacement — cursor positioning marker (moves cursor back after paste)
 - `{{varname}}` — resolved from global_vars or match-level vars
 
 ## Conventions
 
+- **Commits**: follow [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`)
 - **Error handling**: `if err != nil` with `fmt.Errorf("context: %w", err)` wrapping
 - **Naming**: PascalCase for exported types/functions, camelCase for locals, UPPER_SNAKE for evdev constants
 - **Output**: `fmt.Printf` for normal output, `fmt.Fprintf(os.Stderr, ...)` for errors/warnings

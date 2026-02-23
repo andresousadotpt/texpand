@@ -18,8 +18,10 @@ Single static binary. YAML config (espanso-compatible format). Zero runtime depe
 
 Two match modes:
 
-- **Immediate** (`word: false`, default): fires as soon as the trigger is typed (accents)
-- **Word** (`word: true`): fires when space is pressed after the trigger
+- **Word** (`word: true`, default): fires when space is pressed after the trigger
+- **Immediate** (`word: false`): fires as soon as the trigger is typed (accents)
+
+The default mode is controlled by `trigger_mode` in `config.yml`. Individual matches can override it with `word: true` or `word: false`.
 
 ## Install
 
@@ -58,25 +60,50 @@ systemctl --user daemon-reload
 systemctl --user enable --now texpand.service
 ```
 
+## Update
+
+```bash
+go install github.com/andresousadotpt/texpand@latest
+systemctl --user restart texpand.service
+```
+
+To pick up new default config files (without overwriting your existing ones):
+
+```bash
+texpand init
+```
+
 ## Config format
 
 YAML files in `~/.config/texpand/match/*.yml`. Espanso-compatible subset.
 
-### Simple trigger
+### Global settings (`config.yml`)
+
+`~/.config/texpand/config.yml` controls global behavior:
 
 ```yaml
-matches:
-    - trigger: "]a"
-      replace: "á"
+# "space" (default) - triggers fire on space
+# "immediate" - triggers fire as soon as typed
+trigger_mode: space
 ```
 
-### Word-mode trigger (fires on space)
+Individual matches override this with `word: true` or `word: false`.
+
+### Simple trigger (fires on space by default)
 
 ```yaml
 matches:
     - trigger: "'date"
       replace: "{{_date}}"
-      word: true
+```
+
+### Immediate trigger (fires as typed, e.g. accents)
+
+```yaml
+matches:
+    - trigger: "]a"
+      replace: "á"
+      word: false
 ```
 
 ### Multiple triggers for same replacement

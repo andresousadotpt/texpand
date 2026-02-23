@@ -2,56 +2,81 @@ matches:
   # a
   - trigger: "]a"
     replace: "á"
+    word: false
   - trigger: "}a"
     replace: "à"
+    word: false
   - trigger: "~a"
     replace: "ã"
+    word: false
   - trigger: "~o"
     replace: "õ"
+    word: false
   - trigger: "]A"
     replace: "Á"
+    word: false
   - trigger: "}A"
     replace: "Á"
+    word: false
   - trigger: "~A"
     replace: "Ã"
+    word: false
   # e
   - trigger: "]e"
     replace: "é"
+    word: false
   - trigger: "}e"
     replace: "è"
+    word: false
   - trigger: "]E"
     replace: "É"
+    word: false
   - trigger: "}E"
     replace: "È"
+    word: false
   # i
   - trigger: "]i"
     replace: "í"
+    word: false
   - trigger: "}i"
     replace: "ì"
+    word: false
   - trigger: "]I"
     replace: "Í"
+    word: false
   - trigger: "}I"
     replace: "Ì"
+    word: false
   # o
   - trigger: "]o"
     replace: "ó"
+    word: false
   - trigger: "}o"
     replace: "ò"
+    word: false
   - trigger: "]O"
     replace: "Ó"
+    word: false
   - trigger: "}O"
     replace: "Ò"
+    word: false
   - trigger: "~O"
     replace: "Õ"
+    word: false
   # u
   - trigger: "]u"
     replace: "ú"
+    word: false
   - trigger: "}u"
     replace: "ù"
+    word: false
   - trigger: "]U"
     replace: "Ú"
+    word: false
   - trigger: "}U"
     replace: "Ù"
+    word: false
   # ç
   - trigger: "'c,"
     replace: "ç"
+    word: false
