@@ -18,8 +18,10 @@ Single static binary. YAML config (espanso-compatible format). Zero runtime depe
 
 Two trigger modes (set globally in `config.yml`):
 
-- **Space** (default): fires when space is pressed after the trigger
+- **Space** (default): fires when space is pressed after the trigger (space is preserved)
 - **Immediate**: fires as soon as the trigger is typed
+
+Config changes are picked up automatically — no restart needed.
 
 ## Install
 
