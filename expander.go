@@ -88,7 +88,6 @@ func (e *Expander) HandleEvent(ev KeyEvent) {
 			// +1 for the space that was just typed
 			e.sendBackspaces(utf8.RuneCountInString(m.Trigger) + 1)
 			e.clipboardPaste(replacement)
-			e.vkbd.KeyPress(uinput.KeySpace)
 			break
 		}
 		e.buf = ""
