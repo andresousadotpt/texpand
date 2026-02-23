@@ -9,8 +9,10 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/bendahl/uinput"
+	"github.com/fsnotify/fsnotify"
 )
 
 var (
@@ -110,6 +112,21 @@ func run() error {
 		fmt.Printf("  %s\n", name)
 	}
 
+	// Watch config directory for changes
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("create file watcher: %w", err)
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "texpand: WARNING: could not watch %s: %v\n", dir, err)
+	}
+	matchDir := filepath.Join(dir, "match")
+	if err := watcher.Add(matchDir); err != nil {
+		fmt.Fprintf(os.Stderr, "texpand: WARNING: could not watch %s: %v\n", matchDir, err)
+	}
+
 	ch := make(chan KeyEvent, 64)
 	var wg sync.WaitGroup
 
@@ -132,11 +149,55 @@ func run() error {
 		os.Exit(0)
 	}()
 
-	for ev := range ch {
-		expander.HandleEvent(ev)
+	debounce := time.NewTimer(0)
+	if !debounce.Stop() {
+		<-debounce.C
 	}
 
-	return nil
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			expander.HandleEvent(ev)
+		case <-debounce.C:
+			newAppCfg, err := LoadAppConfig(dir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "texpand: reload error: %v\n", err)
+				continue
+			}
+			newCfg, err := LoadConfig(dir, newAppCfg)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "texpand: reload error: %v\n", err)
+				continue
+			}
+			expander.Reload(newCfg)
+			fmt.Printf("texpand: config reloaded — %d triggers loaded\n", len(newCfg.Matches))
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+			if isRelevantChange(event) {
+				dbg("config change detected: %s %s", event.Op, event.Name)
+				debounce.Reset(500 * time.Millisecond)
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, "texpand: watch error: %v\n", err)
+		}
+	}
+}
+
+// isRelevantChange returns true if the fsnotify event represents a
+// write/create/remove of a .yml file (config or match file change).
+func isRelevantChange(event fsnotify.Event) bool {
+	if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove) == 0 {
+		return false
+	}
+	return strings.HasSuffix(event.Name, ".yml")
 }
 
 func main() {
@@ -149,7 +210,7 @@ func main() {
 			debugLog = true
 		default:
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", args[0])
-			fmt.Fprintf(os.Stderr, "usage: texpand [--debug] [init|version]\n")
+			fmt.Fprintf(os.Stderr, "usage: texpand [--debug] [init|version|migrate]\n")
 			os.Exit(1)
 		}
 		args = args[1:]
@@ -169,8 +230,15 @@ func main() {
 		case "version":
 			fmt.Printf("texpand %s\n", version)
 			return
+		case "migrate":
+			dir := configDir()
+			if err := migrateConfig(dir); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		default:
-			fmt.Fprintf(os.Stderr, "usage: texpand [--debug] [init|version]\n")
+			fmt.Fprintf(os.Stderr, "usage: texpand [--debug] [init|version|migrate]\n")
 			os.Exit(1)
 		}
 	}

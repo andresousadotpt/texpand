@@ -31,6 +31,21 @@ func NewExpander(cfg *Config, vkbd uinput.Keyboard) *Expander {
 	return &Expander{config: cfg, vkbd: vkbd, maxLen: maxLen}
 }
 
+// Reload swaps the config and recalculates maxLen. Typing session state
+// (buf, shift) is preserved so in-progress typing is not disrupted.
+func (e *Expander) Reload(cfg *Config) {
+	e.config = cfg
+	e.maxLen = 0
+	for _, m := range cfg.Matches {
+		if len(m.Trigger) > e.maxLen {
+			e.maxLen = len(m.Trigger)
+		}
+	}
+	if len(e.buf) > e.maxLen {
+		e.buf = e.buf[len(e.buf)-e.maxLen:]
+	}
+}
+
 // HandleEvent processes a single key event: tracks shift state, manages
 // the buffer, and fires expansions.
 func (e *Expander) HandleEvent(ev KeyEvent) {

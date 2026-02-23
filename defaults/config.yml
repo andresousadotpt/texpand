@@ -1,5 +1,6 @@
 # texpand configuration
-#
+config_version: 1
+
 # trigger_mode controls when expansions fire:
 #   "space"     - triggers fire when space is pressed after the trigger (default)
 #   "immediate" - triggers fire as soon as the trigger is typed

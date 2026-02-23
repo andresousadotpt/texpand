@@ -11,7 +11,8 @@ import (
 
 // AppConfig holds global application settings from config.yml.
 type AppConfig struct {
-	TriggerMode string `yaml:"trigger_mode"`
+	ConfigVersion int    `yaml:"config_version"`
+	TriggerMode   string `yaml:"trigger_mode"`
 }
 
 // ConfigFile represents a single YAML config file (espanso-compatible).

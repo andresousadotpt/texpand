@@ -65,6 +65,14 @@ go install github.com/andresousadotpt/texpand@latest
 systemctl --user restart texpand.service
 ```
 
+After updating, run the migration command to update your config files to the latest format:
+
+```bash
+texpand migrate
+```
+
+This safely removes deprecated fields, creates `.bak` backups of modified files, and is idempotent (safe to run multiple times).
+
 To pick up new default config files (without overwriting your existing ones):
 
 ```bash
@@ -193,6 +201,19 @@ matches:
 
 ### Date & time (fire on space)
 
+### Usage
+
+```
+texpand [--debug] [init|version|migrate]
+```
+
+| Command   | Description                                          |
+| --------- | ---------------------------------------------------- |
+| (none)    | Run texpand (monitor keyboards, expand triggers)     |
+| `init`    | Create default config in `~/.config/texpand/`        |
+| `version` | Print version                                        |
+| `migrate` | Migrate config files to the latest format            |
+
 | Trigger  | Example output                              |
 | -------- | ------------------------------------------- |
 | `'n`     | `10:56 AM -`                                |
@@ -207,11 +228,7 @@ matches:
 
 ## Adding triggers
 
-Edit or create YAML files in `~/.config/texpand/match/`. Then restart:
-
-```bash
-systemctl --user restart texpand.service
-```
+Edit or create YAML files in `~/.config/texpand/match/`. Changes are picked up automatically — no restart needed.
 
 ## Managing the service
 
