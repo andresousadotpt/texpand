@@ -12,7 +12,7 @@ import (
 	"github.com/bendahl/uinput"
 )
 
-var version = "0.2.0"
+var version = "dev"
 
 func ensureWaylandEnv() {
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
