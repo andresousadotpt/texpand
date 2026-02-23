@@ -77,18 +77,14 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load app config: %w", err)
 	}
-	dbg("trigger_mode: %q, default_word_mode: %v", appCfg.TriggerMode, appCfg.DefaultWordMode())
+	dbg("trigger_mode: %q", appCfg.TriggerMode)
 
 	cfg, err := LoadConfig(dir, appCfg)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 	for _, m := range cfg.Matches {
-		mode := "immediate"
-		if m.Word {
-			mode = "word (space)"
-		}
-		dbg("  trigger=%q replace=%q mode=%s", m.Trigger, m.Replace, mode)
+		dbg("  trigger=%q replace=%q", m.Trigger, m.Replace)
 	}
 
 	keyboards, err := FindKeyboards()

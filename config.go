@@ -14,12 +14,6 @@ type AppConfig struct {
 	TriggerMode string `yaml:"trigger_mode"`
 }
 
-// DefaultWordMode returns the default word-mode value based on TriggerMode.
-// "immediate" → false (fire as typed), anything else → true (fire on space).
-func (a *AppConfig) DefaultWordMode() bool {
-	return a.TriggerMode != "immediate"
-}
-
 // ConfigFile represents a single YAML config file (espanso-compatible).
 type ConfigFile struct {
 	GlobalVars []VarDef   `yaml:"global_vars"`
@@ -41,26 +35,24 @@ type VarParams struct {
 
 // MatchDef is the raw YAML representation of a match entry.
 type MatchDef struct {
-	Trigger   string   `yaml:"trigger"`
-	Triggers  []string `yaml:"triggers"`
-	Replace   string   `yaml:"replace"`
-	Word      *bool    `yaml:"word"`
-	RightWord *bool    `yaml:"right_word"`
-	Vars      []VarDef `yaml:"vars"`
+	Trigger  string   `yaml:"trigger"`
+	Triggers []string `yaml:"triggers"`
+	Replace  string   `yaml:"replace"`
+	Vars     []VarDef `yaml:"vars"`
 }
 
 // Match is a resolved, single-trigger match ready for the expander.
 type Match struct {
 	Trigger    string
 	Replace    string
-	Word       bool
 	Vars       []VarDef
 	GlobalVars []VarDef
 }
 
-// Config holds all loaded matches.
+// Config holds all loaded matches and the global trigger mode.
 type Config struct {
-	Matches []Match
+	TriggerMode string
+	Matches     []Match
 }
 
 // LoadAppConfig reads config.yml from the given config directory.
@@ -92,7 +84,6 @@ func LoadConfig(dir string, appCfg *AppConfig) (*Config, error) {
 		return nil, fmt.Errorf("glob config files: %w", err)
 	}
 
-	defaultWord := appCfg.DefaultWordMode()
 	var allMatches []Match
 
 	for _, f := range files {
@@ -112,13 +103,6 @@ func LoadConfig(dir string, appCfg *AppConfig) (*Config, error) {
 				triggers = md.Triggers
 			}
 
-			word := defaultWord
-			if md.Word != nil {
-				word = *md.Word
-			} else if md.RightWord != nil {
-				word = *md.RightWord
-			}
-
 			for _, t := range triggers {
 				if t == "" {
 					continue
@@ -126,7 +110,6 @@ func LoadConfig(dir string, appCfg *AppConfig) (*Config, error) {
 				allMatches = append(allMatches, Match{
 					Trigger:    t,
 					Replace:    md.Replace,
-					Word:       word,
 					Vars:       md.Vars,
 					GlobalVars: cf.GlobalVars,
 				})
@@ -139,5 +122,5 @@ func LoadConfig(dir string, appCfg *AppConfig) (*Config, error) {
 		return len(allMatches[i].Trigger) > len(allMatches[j].Trigger)
 	})
 
-	return &Config{Matches: allMatches}, nil
+	return &Config{TriggerMode: appCfg.TriggerMode, Matches: allMatches}, nil
 }

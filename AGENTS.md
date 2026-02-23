@@ -40,7 +40,7 @@ main() → ensureWaylandEnv() → LoadAppConfig() → LoadConfig()
 - **Clipboard preservation** — saves clipboard before paste, restores after
 - **Timing delays** — strategic `time.Sleep` calls (8-50ms) between virtual keyboard operations for app responsiveness
 - **Shift state tracking** — tracks shift key press/release to map correct character (normal vs shifted)
-- **Configurable trigger mode** — `config.yml` sets the default (`space` or `immediate`), individual matches override with `word: true/false`
+- **Configurable trigger mode** — `config.yml` sets the global trigger mode (`space` or `immediate`), applies to all matches
 
 ## Build and run
 
@@ -52,7 +52,7 @@ go install ./...      # install to $GOPATH/bin
 ./texpand version     # print version
 ```
 
-No Makefile. No test suite currently. Version is set via `var version` in `main.go`.
+No Makefile. No test suite currently. Version is `"dev"` locally; GoReleaser injects the real version via ldflags. `go install` reads the version from `runtime/debug.ReadBuildInfo`.
 
 ## Dependencies
 
@@ -89,18 +89,15 @@ global_vars:
 matches:
   - trigger: "]a"
     replace: "á"
-    word: false           # immediate mode (overrides global trigger_mode)
 
   - triggers: ["'binsh", "'#!"]
     replace: "#!/bin/sh"
-    word: true            # fires on space
 
   - trigger: "'date"
-    replace: "{{_date}}"  # variable reference — uses global default (space)
+    replace: "{{_date}}"  # variable reference
 ```
 
-- `word: true` / `word: false` — override the global `trigger_mode` per match
-- `right_word: true` — alias for `word: true`
+- `trigger_mode` in `config.yml` controls all matches globally (`space` or `immediate`)
 - `$|$` in replacement — cursor positioning marker (moves cursor back after paste)
 - `{{varname}}` — resolved from global_vars or match-level vars
 
@@ -110,7 +107,7 @@ matches:
 - **Error handling**: `if err != nil` with `fmt.Errorf("context: %w", err)` wrapping
 - **Naming**: PascalCase for exported types/functions, camelCase for locals, UPPER_SNAKE for evdev constants
 - **Output**: `fmt.Printf` for normal output, `fmt.Fprintf(os.Stderr, ...)` for errors/warnings
-- **No logging framework** — plain fmt prints
+- **Debug logging** — `--debug` / `-d` flag enables verbose logging to stderr via `dbg()` helper
 - **No tests** — project has no test files currently
 
 ## Platform requirements

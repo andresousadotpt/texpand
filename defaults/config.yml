@@ -1,8 +1,6 @@
 # texpand configuration
 #
-# trigger_mode controls the default expansion behavior:
+# trigger_mode controls when expansions fire:
 #   "space"     - triggers fire when space is pressed after the trigger (default)
 #   "immediate" - triggers fire as soon as the trigger is typed
-#
-# Individual matches can override this with "word: true" or "word: false".
 trigger_mode: space

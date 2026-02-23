@@ -16,12 +16,10 @@ Single static binary. YAML config (espanso-compatible format). Zero runtime depe
 2. Maintains a rolling buffer of recent keystrokes
 3. On match: backspace the trigger, copy replacement to clipboard, Ctrl+V paste, restore clipboard
 
-Two match modes:
+Two trigger modes (set globally in `config.yml`):
 
-- **Word** (`word: true`, default): fires when space is pressed after the trigger
-- **Immediate** (`word: false`): fires as soon as the trigger is typed (accents)
-
-The default mode is controlled by `trigger_mode` in `config.yml`. Individual matches can override it with `word: true` or `word: false`.
+- **Space** (default): fires when space is pressed after the trigger
+- **Immediate**: fires as soon as the trigger is typed
 
 ## Install
 
@@ -87,23 +85,12 @@ YAML files in `~/.config/texpand/match/*.yml`. Espanso-compatible subset.
 trigger_mode: space
 ```
 
-Individual matches override this with `word: true` or `word: false`.
-
-### Simple trigger (fires on space by default)
+### Simple trigger
 
 ```yaml
 matches:
     - trigger: "'date"
       replace: "{{_date}}"
-```
-
-### Immediate trigger (fires as typed, e.g. accents)
-
-```yaml
-matches:
-    - trigger: "]a"
-      replace: "á"
-      word: false
 ```
 
 ### Multiple triggers for same replacement
@@ -112,7 +99,6 @@ matches:
 matches:
     - triggers: ["'binsh", "'#!"]
       replace: "#!/bin/sh"
-      word: true
 ```
 
 ### Date variables
@@ -127,7 +113,6 @@ global_vars:
 matches:
     - trigger: "'date"
       replace: "{{_date}}"
-      word: true
 ```
 
 ### Date with offset (tomorrow/yesterday)
@@ -136,7 +121,6 @@ matches:
 matches:
     - trigger: "'tdate"
       replace: "{{tomorrow}}"
-      word: true
       vars:
           - name: tomorrow
             type: date
@@ -153,7 +137,6 @@ Use `$|$` to mark where the cursor should land after expansion:
 matches:
     - trigger: "'11"
       replace: "{{time_with_ampm}} - 1:1 with [$|$]"
-      word: true
 ```
 
 ### Supported strftime tokens
@@ -258,6 +241,14 @@ You'll see output like:
 texpand: monitoring 2 keyboard(s) — 35 triggers loaded
   AT Translated Set 2 keyboard
   Logitech USB Receiver
+```
+
+### Debug mode
+
+Use `--debug` (or `-d`) for verbose output on stderr — shows config loading, trigger mode, loaded triggers, buffer state, and match decisions:
+
+```bash
+./texpand --debug
 ```
 
 ### Checking what config was loaded

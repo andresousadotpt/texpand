@@ -1,7 +1,5 @@
 matches:
   - trigger: "'deg"
     replace: "º"
-    word: true
   - trigger: "'..."
     replace: "…"
-    word: true
