@@ -331,6 +331,8 @@ sudo cp 99-uinput.rules /etc/udev/rules.d/99-uinput.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
 # If still failing:
 sudo modprobe -r uinput && sudo modprobe uinput
+# If udevadm trigger fails with "No such device", fix permissions manually:
+sudo chgrp input /dev/uinput && sudo chmod 0660 /dev/uinput
 ls -la /dev/uinput  # Should show crw-rw---- root input
 ```
 
