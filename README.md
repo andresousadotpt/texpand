@@ -45,6 +45,10 @@ texpand reads from `/dev/input/` and writes to `/dev/uinput`.
 # Add your user to the input group
 sudo usermod -aG input $USER
 
+# Ensure the uinput module loads at boot
+echo uinput | sudo tee /etc/modules-load.d/uinput.conf
+sudo modprobe uinput
+
 # Allow input group to write to /dev/uinput
 sudo cp 99-uinput.rules /etc/udev/rules.d/99-uinput.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
@@ -326,11 +330,17 @@ sudo usermod -aG input $USER
 
 ### "/dev/uinput" permission denied
 
+The most common cause is the `uinput` kernel module not being loaded at boot:
+
 ```bash
+# Ensure the module loads at boot and load it now
+echo uinput | sudo tee /etc/modules-load.d/uinput.conf
+sudo modprobe uinput
+
+# Install the udev rule and reload
 sudo cp 99-uinput.rules /etc/udev/rules.d/99-uinput.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
-# If still failing:
-sudo modprobe -r uinput && sudo modprobe uinput
+
 # If udevadm trigger fails with "No such device", fix permissions manually:
 sudo chgrp input /dev/uinput && sudo chmod 0660 /dev/uinput
 ls -la /dev/uinput  # Should show crw-rw---- root input
