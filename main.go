@@ -133,7 +133,7 @@ func run() error {
 	}
 	defer vkbd.Close()
 
-	expander := NewExpander(cfg, vkbd)
+	expander := NewExpander(cfg, vkbd, keyboards)
 
 	fmt.Printf("texpand: monitoring %d keyboard(s) — %d triggers loaded\n",
 		len(keyboards), len(cfg.Matches))
@@ -190,7 +190,22 @@ func run() error {
 			if !ok {
 				return nil
 			}
-			expander.HandleEvent(ev)
+			if expander.HandleEvent(ev) {
+				// Let monitor goroutines flush remaining events into the
+				// channel before draining. After ungrab, not user-visible.
+				time.Sleep(1 * time.Millisecond)
+				// Drain events that accumulated during keyboard grab.
+				// These keystrokes never reached the compositor, so
+				// processing them would desync the buffer.
+			drain:
+				for {
+					select {
+					case <-ch:
+					default:
+						break drain
+					}
+				}
+			}
 		case <-debounce.C:
 			newAppCfg, err := LoadAppConfig(dir)
 			if err != nil {

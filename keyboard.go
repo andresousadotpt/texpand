@@ -42,6 +42,12 @@ func FindKeyboards() ([]*evdev.InputDevice, error) {
 		}
 
 		if hasA && hasEnter {
+			// Skip our own virtual keyboard to prevent feedback loops
+			name, _ := dev.Name()
+			if name == "texpand" {
+				dev.Close()
+				continue
+			}
 			kbds = append(kbds, dev)
 		} else {
 			dev.Close()

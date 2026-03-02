@@ -10,25 +10,66 @@ import (
 	evdev "github.com/holoplot/go-evdev"
 )
 
+// ReverseKey maps a character to the uinput key code needed to type it,
+// plus whether Shift must be held.
+type ReverseKey struct {
+	Code  int
+	Shift bool
+}
+
+// reverseKeyMap maps runes to their key code + shift state, built from KeyCharMap at init.
+var reverseKeyMap map[rune]ReverseKey
+
+func init() {
+	// evdev key codes are numerically identical to uinput key codes, so we
+	// can cast directly.
+	reverseKeyMap = make(map[rune]ReverseKey, len(KeyCharMap)*2)
+	for evCode, kc := range KeyCharMap {
+		code := int(evCode)
+		for _, r := range kc.Normal {
+			reverseKeyMap[r] = ReverseKey{Code: code, Shift: false}
+		}
+		for _, r := range kc.Shifted {
+			if r != []rune(kc.Normal)[0] { // avoid overwriting if Normal == Shifted (e.g. space)
+				reverseKeyMap[r] = ReverseKey{Code: code, Shift: true}
+			}
+		}
+	}
+	// Special keys not in KeyCharMap
+	reverseKeyMap['\n'] = ReverseKey{Code: uinput.KeyEnter, Shift: false}
+	reverseKeyMap['\t'] = ReverseKey{Code: uinput.KeyTab, Shift: false}
+}
+
+// hasWtype is true if the wtype binary is available on PATH.
+// Checked once at init to avoid repeated lookups.
+var hasWtype bool
+
+func init() {
+	_, err := exec.LookPath("wtype")
+	hasWtype = err == nil
+}
+
 // Expander maintains a rolling keystroke buffer and triggers text
 // expansion when a match is detected.
 type Expander struct {
-	config *Config
-	vkbd   uinput.Keyboard
-	buf    string
-	shift  bool
-	maxLen int
+	config    *Config
+	vkbd      uinput.Keyboard
+	keyboards []*evdev.InputDevice
+	buf       string
+	shift     bool
+	maxLen    int
 }
 
-// NewExpander creates an Expander with the given config and virtual keyboard.
-func NewExpander(cfg *Config, vkbd uinput.Keyboard) *Expander {
+// NewExpander creates an Expander with the given config, virtual keyboard,
+// and physical keyboard devices (for grab/ungrab during expansion).
+func NewExpander(cfg *Config, vkbd uinput.Keyboard, keyboards []*evdev.InputDevice) *Expander {
 	maxLen := 0
 	for _, m := range cfg.Matches {
 		if len(m.Trigger) > maxLen {
 			maxLen = len(m.Trigger)
 		}
 	}
-	return &Expander{config: cfg, vkbd: vkbd, maxLen: maxLen}
+	return &Expander{config: cfg, vkbd: vkbd, keyboards: keyboards, maxLen: maxLen}
 }
 
 // Reload swaps the config and recalculates maxLen. Typing session state
@@ -46,24 +87,108 @@ func (e *Expander) Reload(cfg *Config) {
 	}
 }
 
+// grabKeyboards takes exclusive access to all physical keyboards via EVIOCGRAB.
+// While grabbed, no other process (compositor, applications) receives input
+// events from these devices.
+func (e *Expander) grabKeyboards() {
+	for _, kb := range e.keyboards {
+		if err := kb.Grab(); err != nil {
+			dbg("grab failed: %v", err)
+		}
+	}
+}
+
+// ungrabKeyboards releases exclusive access, restoring normal event delivery.
+func (e *Expander) ungrabKeyboards() {
+	for _, kb := range e.keyboards {
+		if err := kb.Ungrab(); err != nil {
+			dbg("ungrab failed: %v", err)
+		}
+	}
+}
+
+// canTypeDirectly returns true if every rune in text has a reverse key mapping.
+func canTypeDirectly(text string) bool {
+	for _, r := range text {
+		if _, ok := reverseKeyMap[r]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// typeText types text character-by-character via the virtual keyboard.
+// No inter-key delays — uinput events are kernel-FIFO-ordered.
+func (e *Expander) typeText(text string) {
+	for _, r := range text {
+		rk := reverseKeyMap[r]
+		if rk.Shift {
+			e.vkbd.KeyDown(uinput.KeyLeftshift)
+		}
+		e.vkbd.KeyPress(rk.Code)
+		if rk.Shift {
+			e.vkbd.KeyUp(uinput.KeyLeftshift)
+		}
+	}
+}
+
+// performExpansion handles the full expansion sequence: grab, backspace,
+// type/paste replacement, cursor positioning, ungrab.
+// extraBackspaces is 1 in space mode (to delete the trailing space) and 0 in immediate mode.
+func (e *Expander) performExpansion(m Match, extraBackspaces int) {
+	replacement := e.resolveReplacement(m)
+
+	// Handle $|$ cursor marker
+	cursorOffset := 0
+	if idx := strings.Index(replacement, "$|$"); idx != -1 {
+		after := replacement[idx+3:]
+		cursorOffset = utf8.RuneCountInString(after)
+		replacement = replacement[:idx] + after
+	}
+
+	e.grabKeyboards()
+	e.sendBackspaces(utf8.RuneCountInString(m.Trigger) + extraBackspaces)
+
+	if canTypeDirectly(replacement) {
+		dbg("typing directly (%d chars)", utf8.RuneCountInString(replacement))
+		e.typeText(replacement)
+	} else if hasWtype {
+		dbg("using wtype (%d chars, has unmappable runes)", utf8.RuneCountInString(replacement))
+		e.wtypeText(replacement)
+	} else {
+		dbg("falling back to clipboard paste (unmappable chars, no wtype)")
+		e.clipboardPaste(replacement)
+	}
+
+	// Move cursor back if $|$ was present
+	if cursorOffset > 0 {
+		for i := 0; i < cursorOffset; i++ {
+			e.vkbd.KeyPress(uinput.KeyLeft)
+		}
+	}
+
+	e.ungrabKeyboards()
+}
+
 // HandleEvent processes a single key event: tracks shift state, manages
-// the buffer, and fires expansions.
-func (e *Expander) HandleEvent(ev KeyEvent) {
+// the buffer, and fires expansions. Returns true if an expansion was
+// performed (caller should drain the event channel).
+func (e *Expander) HandleEvent(ev KeyEvent) bool {
 	// Track shift state
 	if ev.Code == evdev.KEY_LEFTSHIFT || ev.Code == evdev.KEY_RIGHTSHIFT {
 		e.shift = ev.Value > 0
-		return
+		return false
 	}
 
 	// Only process key-down events
 	if ev.Value != 1 {
-		return
+		return false
 	}
 
 	// Buffer reset keys
 	if BufferResetKeys[ev.Code] {
 		e.buf = ""
-		return
+		return false
 	}
 
 	// Backspace: remove last rune from buffer
@@ -72,7 +197,7 @@ func (e *Expander) HandleEvent(ev KeyEvent) {
 			_, size := utf8.DecodeLastRuneInString(e.buf)
 			e.buf = e.buf[:len(e.buf)-size]
 		}
-		return
+		return false
 	}
 
 	// In "space" mode: check matches on space, then clear buffer
@@ -83,21 +208,18 @@ func (e *Expander) HandleEvent(ev KeyEvent) {
 				continue
 			}
 			dbg("match: trigger=%q → expanding", m.Trigger)
-			replacement := e.resolveReplacement(m)
-			time.Sleep(30 * time.Millisecond)
-			// +1 for the space that was just typed
-			e.sendBackspaces(utf8.RuneCountInString(m.Trigger) + 1)
-			e.clipboardPaste(replacement)
-			break
+			e.performExpansion(m, 1) // +1 for the space
+			e.buf = ""
+			return true
 		}
 		e.buf = ""
-		return
+		return false
 	}
 
 	// Map keycode to character
 	kc, ok := KeyCharMap[ev.Code]
 	if !ok {
-		return
+		return false
 	}
 
 	ch := kc.Normal
@@ -118,14 +240,12 @@ func (e *Expander) HandleEvent(ev KeyEvent) {
 				continue
 			}
 			dbg("match: trigger=%q → expanding", m.Trigger)
-			replacement := e.resolveReplacement(m)
-			time.Sleep(30 * time.Millisecond)
-			e.sendBackspaces(utf8.RuneCountInString(m.Trigger))
-			e.clipboardPaste(replacement)
+			e.performExpansion(m, 0)
 			e.buf = ""
-			break
+			return true
 		}
 	}
+	return false
 }
 
 // resolveReplacement computes the final replacement text for a match,
@@ -140,49 +260,41 @@ func (e *Expander) resolveReplacement(m Match) string {
 func (e *Expander) sendBackspaces(n int) {
 	for i := 0; i < n; i++ {
 		e.vkbd.KeyPress(uinput.KeyBackspace)
-		time.Sleep(8 * time.Millisecond)
 	}
 }
 
-// clipboardPaste copies the text to clipboard via wl-copy, sends Ctrl+V
-// to paste, then restores the previous clipboard contents.
-// Handles $|$ cursor marker: strips it and moves cursor back after paste.
-func (e *Expander) clipboardPaste(text string) {
-	// Handle $|$ cursor marker
-	cursorOffset := 0
-	if idx := strings.Index(text, "$|$"); idx != -1 {
-		after := text[idx+3:]
-		cursorOffset = utf8.RuneCountInString(after)
-		text = text[:idx] + after
+// wtypeText types text via the wtype Wayland tool. Handles Unicode characters
+// that can't be typed via uinput key codes. Single subprocess, no clipboard.
+func (e *Expander) wtypeText(text string) {
+	if err := exec.Command("wtype", "--", text).Run(); err != nil {
+		dbg("wtype failed: %v, falling back to clipboard", err)
+		e.clipboardPaste(text)
 	}
+}
 
+// clipboardPaste is a last-resort fallback. Copies text to clipboard via
+// wl-copy, sends Ctrl+V to paste, then restores the previous clipboard.
+// Cursor marker handling is done by the caller (performExpansion).
+func (e *Expander) clipboardPaste(text string) {
 	// Save current clipboard
 	oldClip, _ := exec.Command("wl-paste", "-n").Output()
 
-	// Copy replacement text
+	// Copy replacement text (.Run() blocks until complete — no extra sleep needed)
 	exec.Command("wl-copy", "--", text).Run()
-	time.Sleep(50 * time.Millisecond)
 
-	// Send Ctrl+V
+	// Send Ctrl+V (keyboards are grabbed so no risk of Ctrl bleeding)
 	e.vkbd.KeyDown(uinput.KeyLeftctrl)
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
 	e.vkbd.KeyPress(uinput.KeyV)
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
 	e.vkbd.KeyUp(uinput.KeyLeftctrl)
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 
-	// Move cursor back if $|$ was present
-	if cursorOffset > 0 {
-		time.Sleep(30 * time.Millisecond)
-		for i := 0; i < cursorOffset; i++ {
-			e.vkbd.KeyPress(uinput.KeyLeft)
-			time.Sleep(8 * time.Millisecond)
-		}
-	}
-
-	// Restore previous clipboard
+	// Restore previous clipboard asynchronously
 	if len(oldClip) > 0 {
-		cmd := exec.Command("wl-copy", "--", string(oldClip))
-		cmd.Start()
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			exec.Command("wl-copy", "--", string(oldClip)).Run()
+		}()
 	}
 }
