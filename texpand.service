@@ -1,8 +1,14 @@
 [Unit]
 Description=texpand - Lightweight Wayland text expander
-After=graphical-session.target
+After=graphical-session.target systemd-udev-settle.service
+
+# Allow more restart attempts during boot while devices settle
+StartLimitIntervalSec=60
+StartLimitBurst=10
 
 [Service]
+# Guard: don't start unless /dev/uinput is writable
+ExecStartPre=/bin/sh -c 'test -w /dev/uinput'
 ExecStart=%h/go/bin/texpand
 Restart=on-failure
 RestartSec=3

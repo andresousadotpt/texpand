@@ -13,6 +13,7 @@ import (
 
 	"github.com/bendahl/uinput"
 	"github.com/fsnotify/fsnotify"
+	evdev "github.com/holoplot/go-evdev"
 )
 
 var (
@@ -89,17 +90,46 @@ func run() error {
 		dbg("  trigger=%q replace=%q", m.Trigger, m.Replace)
 	}
 
-	keyboards, err := FindKeyboards()
-	if err != nil {
-		return fmt.Errorf("find keyboards: %w", err)
-	}
-	if len(keyboards) == 0 {
-		return fmt.Errorf("no keyboard devices found\nMake sure you are in the 'input' group:\n  sudo usermod -aG input $USER\nThen log out and back in")
-	}
+	// Retry device initialization — at boot, /dev/uinput and keyboard
+	// devices may not be available yet (module not loaded, udev rules
+	// not applied). Retry with backoff for up to ~30 seconds.
+	const maxRetries = 10
+	var keyboards []*evdev.InputDevice
+	var vkbd uinput.Keyboard
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		keyboards, err = FindKeyboards()
+		if err != nil {
+			if attempt == maxRetries {
+				return fmt.Errorf("find keyboards: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "texpand: waiting for keyboard devices (attempt %d/%d): %v\n", attempt, maxRetries, err)
+			time.Sleep(time.Duration(attempt) * time.Second)
+			continue
+		}
+		if len(keyboards) == 0 {
+			if attempt == maxRetries {
+				return fmt.Errorf("no keyboard devices found\nMake sure you are in the 'input' group:\n  sudo usermod -aG input $USER\nThen log out and back in")
+			}
+			fmt.Fprintf(os.Stderr, "texpand: no keyboards found yet (attempt %d/%d), retrying...\n", attempt, maxRetries)
+			time.Sleep(time.Duration(attempt) * time.Second)
+			continue
+		}
 
-	vkbd, err := uinput.CreateKeyboard("/dev/uinput", []byte("texpand"))
-	if err != nil {
-		return fmt.Errorf("create virtual keyboard: %w", err)
+		vkbd, err = uinput.CreateKeyboard("/dev/uinput", []byte("texpand"))
+		if err != nil {
+			// Close any keyboards we opened before retrying
+			for _, kb := range keyboards {
+				kb.Close()
+			}
+			keyboards = nil
+			if attempt == maxRetries {
+				return fmt.Errorf("create virtual keyboard: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "texpand: /dev/uinput not ready (attempt %d/%d): %v\n", attempt, maxRetries, err)
+			time.Sleep(time.Duration(attempt) * time.Second)
+			continue
+		}
+		break
 	}
 	defer vkbd.Close()
 
