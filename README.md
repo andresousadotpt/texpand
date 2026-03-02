@@ -14,7 +14,7 @@ Single static binary. YAML config (espanso-compatible format). Zero runtime depe
 
 1. Monitors `/dev/input/event*` devices via evdev (non-exclusive)
 2. Maintains a rolling buffer of recent keystrokes
-3. On match: grabs keyboards, backspaces the trigger, types the replacement via uinput (falls back to `wtype` for Unicode, then clipboard paste as last resort)
+3. On match: backspaces the trigger, types the replacement via uinput (falls back to `wtype` for Unicode, then clipboard paste as last resort)
 
 Two trigger modes (set globally in `config.yml`):
 
