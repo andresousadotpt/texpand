@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 	"time"
@@ -44,6 +45,10 @@ func init() {
 // Checked once at init to avoid repeated lookups.
 var hasWtype bool
 
+// wtypeBroken is set to true after the first wtype failure, so we
+// skip it on subsequent expansions and go straight to clipboard paste.
+var wtypeBroken bool
+
 func init() {
 	_, err := exec.LookPath("wtype")
 	hasWtype = err == nil
@@ -52,24 +57,22 @@ func init() {
 // Expander maintains a rolling keystroke buffer and triggers text
 // expansion when a match is detected.
 type Expander struct {
-	config    *Config
-	vkbd      uinput.Keyboard
-	keyboards []*evdev.InputDevice
-	buf       string
-	shift     bool
-	maxLen    int
+	config *Config
+	vkbd   uinput.Keyboard
+	buf    string
+	shift  bool
+	maxLen int
 }
 
-// NewExpander creates an Expander with the given config, virtual keyboard,
-// and physical keyboard devices (for grab/ungrab during expansion).
-func NewExpander(cfg *Config, vkbd uinput.Keyboard, keyboards []*evdev.InputDevice) *Expander {
+// NewExpander creates an Expander with the given config and virtual keyboard.
+func NewExpander(cfg *Config, vkbd uinput.Keyboard) *Expander {
 	maxLen := 0
 	for _, m := range cfg.Matches {
 		if len(m.Trigger) > maxLen {
 			maxLen = len(m.Trigger)
 		}
 	}
-	return &Expander{config: cfg, vkbd: vkbd, keyboards: keyboards, maxLen: maxLen}
+	return &Expander{config: cfg, vkbd: vkbd, maxLen: maxLen}
 }
 
 // Reload swaps the config and recalculates maxLen. Typing session state
@@ -84,26 +87,6 @@ func (e *Expander) Reload(cfg *Config) {
 	}
 	if len(e.buf) > e.maxLen {
 		e.buf = e.buf[len(e.buf)-e.maxLen:]
-	}
-}
-
-// grabKeyboards takes exclusive access to all physical keyboards via EVIOCGRAB.
-// While grabbed, no other process (compositor, applications) receives input
-// events from these devices.
-func (e *Expander) grabKeyboards() {
-	for _, kb := range e.keyboards {
-		if err := kb.Grab(); err != nil {
-			dbg("grab failed: %v", err)
-		}
-	}
-}
-
-// ungrabKeyboards releases exclusive access, restoring normal event delivery.
-func (e *Expander) ungrabKeyboards() {
-	for _, kb := range e.keyboards {
-		if err := kb.Ungrab(); err != nil {
-			dbg("ungrab failed: %v", err)
-		}
 	}
 }
 
@@ -132,8 +115,8 @@ func (e *Expander) typeText(text string) {
 	}
 }
 
-// performExpansion handles the full expansion sequence: grab, backspace,
-// type/paste replacement, cursor positioning, ungrab.
+// performExpansion handles the full expansion sequence: backspace the
+// trigger, type/paste the replacement, and position the cursor.
 // extraBackspaces is 1 in space mode (to delete the trailing space) and 0 in immediate mode.
 func (e *Expander) performExpansion(m Match, extraBackspaces int) {
 	replacement := e.resolveReplacement(m)
@@ -146,17 +129,20 @@ func (e *Expander) performExpansion(m Match, extraBackspaces int) {
 		replacement = replacement[:idx] + after
 	}
 
-	e.grabKeyboards()
 	e.sendBackspaces(utf8.RuneCountInString(m.Trigger) + extraBackspaces)
 
 	if canTypeDirectly(replacement) {
 		dbg("typing directly (%d chars)", utf8.RuneCountInString(replacement))
 		e.typeText(replacement)
-	} else if hasWtype {
+	} else if hasWtype && !wtypeBroken {
 		dbg("using wtype (%d chars, has unmappable runes)", utf8.RuneCountInString(replacement))
-		e.wtypeText(replacement)
+		if err := e.wtypeText(replacement); err != nil {
+			dbg("wtype broken: %v — disabling, falling back to clipboard", err)
+			wtypeBroken = true
+			e.clipboardPaste(replacement)
+		}
 	} else {
-		dbg("falling back to clipboard paste (unmappable chars, no wtype)")
+		dbg("clipboard paste (%d chars, unmappable runes)", utf8.RuneCountInString(replacement))
 		e.clipboardPaste(replacement)
 	}
 
@@ -166,8 +152,6 @@ func (e *Expander) performExpansion(m Match, extraBackspaces int) {
 			e.vkbd.KeyPress(uinput.KeyLeft)
 		}
 	}
-
-	e.ungrabKeyboards()
 }
 
 // HandleEvent processes a single key event: tracks shift state, manages
@@ -264,17 +248,18 @@ func (e *Expander) sendBackspaces(n int) {
 }
 
 // wtypeText types text via the wtype Wayland tool. Handles Unicode characters
-// that can't be typed via uinput key codes. Single subprocess, no clipboard.
-func (e *Expander) wtypeText(text string) {
-	if err := exec.Command("wtype", "--", text).Run(); err != nil {
-		dbg("wtype failed: %v, falling back to clipboard", err)
-		e.clipboardPaste(text)
+// that can't be typed via uinput key codes. Returns error on failure.
+func (e *Expander) wtypeText(text string) error {
+	cmd := exec.Command("wtype", "--", text)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(output)))
 	}
+	return nil
 }
 
-// clipboardPaste is a last-resort fallback. Copies text to clipboard via
-// wl-copy, sends Ctrl+V to paste, then restores the previous clipboard.
-// Cursor marker handling is done by the caller (performExpansion).
+// clipboardPaste copies text to clipboard via wl-copy, sends Ctrl+V to
+// paste, then restores the previous clipboard asynchronously.
 func (e *Expander) clipboardPaste(text string) {
 	// Save current clipboard
 	oldClip, _ := exec.Command("wl-paste", "-n").Output()
@@ -282,7 +267,7 @@ func (e *Expander) clipboardPaste(text string) {
 	// Copy replacement text (.Run() blocks until complete — no extra sleep needed)
 	exec.Command("wl-copy", "--", text).Run()
 
-	// Send Ctrl+V (keyboards are grabbed so no risk of Ctrl bleeding)
+	// Send Ctrl+V to paste
 	e.vkbd.KeyDown(uinput.KeyLeftctrl)
 	time.Sleep(5 * time.Millisecond)
 	e.vkbd.KeyPress(uinput.KeyV)

@@ -1,20 +1,20 @@
 # texpand
 
-Lightweight Wayland text expander. Reads raw keyboard events via `evdev`, expands triggers via clipboard paste. Works on any Wayland compositor (KDE, GNOME, Hyprland, Sway, etc.).
+Lightweight Wayland text expander. Reads raw keyboard events via `evdev`, types replacements directly via `uinput`. Works on any Wayland compositor (KDE, GNOME, Hyprland, Sway, etc.).
 
-Single static binary. YAML config (espanso-compatible format). Zero runtime dependencies beyond `wl-clipboard`.
+Single static binary. YAML config (espanso-compatible format). Zero runtime dependencies (optional: `wtype` for Unicode, `wl-clipboard` as last-resort fallback).
 
 > **Warning**: This was vibe coded. It works, but don't expect anything from it xD.
 
 ## How it works
 
 ```
-[Keyboard] ──evdev──→ texpand ──wl-copy + Ctrl+V──→ [Any App]
+[Keyboard] ──evdev──→ texpand ──uinput──→ [Any App]
 ```
 
 1. Monitors `/dev/input/event*` devices via evdev (non-exclusive)
 2. Maintains a rolling buffer of recent keystrokes
-3. On match: backspace the trigger, copy replacement to clipboard, Ctrl+V paste, restore clipboard
+3. On match: grabs keyboards, backspaces the trigger, types the replacement via uinput (falls back to `wtype` for Unicode, then clipboard paste as last resort)
 
 Two trigger modes (set globally in `config.yml`):
 

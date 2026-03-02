@@ -133,7 +133,8 @@ func run() error {
 	}
 	defer vkbd.Close()
 
-	expander := NewExpander(cfg, vkbd, keyboards)
+	ch := make(chan KeyEvent, 64)
+	expander := NewExpander(cfg, vkbd)
 
 	fmt.Printf("texpand: monitoring %d keyboard(s) — %d triggers loaded\n",
 		len(keyboards), len(cfg.Matches))
@@ -157,7 +158,6 @@ func run() error {
 		fmt.Fprintf(os.Stderr, "texpand: WARNING: could not watch %s: %v\n", matchDir, err)
 	}
 
-	ch := make(chan KeyEvent, 64)
 	var wg sync.WaitGroup
 
 	for _, kb := range keyboards {
@@ -191,12 +191,9 @@ func run() error {
 				return nil
 			}
 			if expander.HandleEvent(ev) {
-				// Let monitor goroutines flush remaining events into the
-				// channel before draining. After ungrab, not user-visible.
-				time.Sleep(1 * time.Millisecond)
-				// Drain events that accumulated during keyboard grab.
-				// These keystrokes never reached the compositor, so
-				// processing them would desync the buffer.
+				// Brief pause after expansion to avoid processing
+				// stale events from the physical keyboard.
+				time.Sleep(5 * time.Millisecond)
 			drain:
 				for {
 					select {
