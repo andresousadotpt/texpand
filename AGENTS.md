@@ -11,8 +11,8 @@ Wayland-only. Requires `wl-clipboard` at runtime and access to `/dev/input/` and
 ## Architecture
 
 ```
-main.go           → Entry point, CLI commands (init, version, migrate), signal handling
-keyboard.go       → Enumerates /dev/input/ devices, monitors key events via goroutines
+main.go           → Entry point, CLI commands (init, version, migrate), signal handling, device hotplug loop
+keyboard.go       → Enumerates /dev/input/ devices, manages keyboard monitors, reports monitor exits
 keymap.go         → US/International evdev keycode → character mapping (normal + shifted)
 expander.go       → Rolling keystroke buffer, trigger matching, clipboard paste, virtual keyboard
 config.go         → Loads app config (config.yml) and YAML match files from ~/.config/texpand/match/
@@ -26,12 +26,14 @@ strftime.go       → Strftime token replacement (%Y, %m, %d, etc.)
 
 ```
 main() → ensureWaylandEnv() → LoadAppConfig() → LoadConfig()
-       → FindKeyboards() → fsnotify.NewWatcher() (watch config + match dirs)
+       → FindKeyboards() → fsnotify.NewWatcher() (watch config + match dirs + /dev/input)
        → MonitorKeyboard() goroutines (one per keyboard) → event channel
        → select loop:
            keyboard event  → Expander.HandleEvent() → buffer → trigger match
-           fsnotify event  → debounce timer (500ms)
-           debounce fires  → LoadAppConfig() + LoadConfig() → Expander.Reload()
+           keyboard exit   → remove monitor → debounce keyboard rescan
+           /dev/input event or rescan ticker → RefreshKeyboardMonitors()
+           config fsnotify event → debounce timer (500ms)
+           config debounce fires → LoadAppConfig() + LoadConfig() → Expander.Reload()
        → resolveReplacement() → clipboardPaste() + Ctrl+V
 ```
 
@@ -39,6 +41,7 @@ main() → ensureWaylandEnv() → LoadAppConfig() → LoadConfig()
 
 - **Single package (`main`)** — all files are in package main, no internal packages
 - **Goroutine per keyboard** — each keyboard device gets its own monitoring goroutine, events are funneled into a single channel
+- **Keyboard hotplug recovery** — monitors `/dev/input` and rescans periodically so recreated event nodes are picked up after USB hub, KVM, or monitor input resets
 - **Rolling buffer with suffix matching** — buffer is capped to the longest trigger length, matches check `strings.HasSuffix`
 - **Longest-trigger-first sorting** — prevents partial false matches
 - **Hot-reload** — watches config directory via fsnotify, debounces file changes (500ms), reloads config through the main event loop without restarting

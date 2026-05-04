@@ -16,6 +16,11 @@ Single static binary. YAML config (espanso-compatible format). Zero runtime depe
 2. Maintains a rolling buffer of recent keystrokes
 3. On match: backspaces the trigger, types the replacement via uinput (falls back to `wtype` for Unicode, then clipboard paste as last resort)
 
+texpand watches `/dev/input` while it runs. If a keyboard disappears and
+reappears, for example when a monitor with an attached USB hub changes input or
+powers off and on, texpand rescans devices and starts monitoring the new event
+node without requiring a service restart.
+
 Two trigger modes (set globally in `config.yml`):
 
 - **Space** (default): fires when space is pressed after the trigger
@@ -327,6 +332,23 @@ groups  # Should include 'input'
 sudo usermod -aG input $USER
 # Log out and back in
 ```
+
+### Keyboard stops working after monitor input changes
+
+texpand automatically rescans `/dev/input` when keyboard event devices are
+created, removed, renamed, or have permissions updated. It also performs a
+periodic rescan as a fallback.
+
+Run with debug logging if expansions stop after changing monitor input or power
+cycling a monitor:
+
+```bash
+./texpand --debug
+```
+
+The logs include keyboard disconnect, reconnect, and rescan messages. If no
+keyboard is reconnected, check that the new `/dev/input/event*` device is
+readable by your user and that your user is still in the `input` group.
 
 ### "/dev/uinput" permission denied
 

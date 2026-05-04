@@ -90,6 +90,13 @@ func (e *Expander) Reload(cfg *Config) {
 	}
 }
 
+// ResetInputState clears transient keyboard state after a physical keyboard
+// disconnects or reconnects.
+func (e *Expander) ResetInputState() {
+	e.buf = ""
+	e.shift = false
+}
+
 // canTypeDirectly returns true if every rune in text has a reverse key mapping.
 func canTypeDirectly(text string) bool {
 	for _, r := range text {

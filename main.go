@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -134,6 +133,7 @@ func run() error {
 	defer vkbd.Close()
 
 	ch := make(chan KeyEvent, 64)
+	keyboardDone := make(chan keyboardMonitorExit, 64)
 	expander := NewExpander(cfg, vkbd)
 
 	fmt.Printf("texpand: monitoring %d keyboard(s) — %d triggers loaded\n",
@@ -157,32 +157,23 @@ func run() error {
 	if err := watcher.Add(matchDir); err != nil {
 		fmt.Fprintf(os.Stderr, "texpand: WARNING: could not watch %s: %v\n", matchDir, err)
 	}
+	if err := watcher.Add("/dev/input"); err != nil {
+		fmt.Fprintf(os.Stderr, "texpand: WARNING: could not watch /dev/input for keyboard hotplug: %v\n", err)
+	}
 
-	var wg sync.WaitGroup
-
+	keyboardMonitors := make(map[string]monitoredKeyboard, len(keyboards))
 	for _, kb := range keyboards {
-		wg.Add(1)
-		go MonitorKeyboard(kb, ch, &wg)
+		startKeyboardMonitor(keyboardMonitors, kb, ch, keyboardDone)
 	}
 
 	// Clean shutdown on SIGINT/SIGTERM
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	go func() {
-		<-sigCh
-		fmt.Println("\ntexpand: shutting down")
-		for _, kb := range keyboards {
-			kb.Close()
-		}
-		vkbd.Close()
-		os.Exit(0)
-	}()
-
-	debounce := time.NewTimer(0)
-	if !debounce.Stop() {
-		<-debounce.C
-	}
+	configDebounce := newStoppedTimer()
+	keyboardDebounce := newStoppedTimer()
+	keyboardRescan := time.NewTicker(5 * time.Second)
+	defer keyboardRescan.Stop()
 
 	for {
 		select {
@@ -203,7 +194,35 @@ func run() error {
 					}
 				}
 			}
-		case <-debounce.C:
+		case stopped := <-keyboardDone:
+			if mon, ok := keyboardMonitors[stopped.path]; ok && mon.dev == stopped.dev {
+				mon.dev.Close()
+				delete(keyboardMonitors, stopped.path)
+				expander.ResetInputState()
+				fmt.Printf("texpand: keyboard disconnected: %s\n", mon.name)
+			}
+			resetTimer(keyboardDebounce, 500*time.Millisecond)
+		case <-keyboardDebounce.C:
+			changed, err := RefreshKeyboardMonitors(keyboardMonitors, ch, keyboardDone)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "texpand: keyboard rescan error: %v\n", err)
+				continue
+			}
+			if changed {
+				expander.ResetInputState()
+				fmt.Printf("texpand: monitoring %d keyboard(s)\n", len(keyboardMonitors))
+			}
+		case <-keyboardRescan.C:
+			changed, err := RefreshKeyboardMonitors(keyboardMonitors, ch, keyboardDone)
+			if err != nil {
+				dbg("keyboard rescan error: %v", err)
+				continue
+			}
+			if changed {
+				expander.ResetInputState()
+				fmt.Printf("texpand: monitoring %d keyboard(s)\n", len(keyboardMonitors))
+			}
+		case <-configDebounce.C:
 			newAppCfg, err := LoadAppConfig(dir)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "texpand: reload error: %v\n", err)
@@ -222,15 +241,43 @@ func run() error {
 			}
 			if isRelevantChange(event) {
 				dbg("config change detected: %s %s", event.Op, event.Name)
-				debounce.Reset(500 * time.Millisecond)
+				resetTimer(configDebounce, 500*time.Millisecond)
+			}
+			if isInputDeviceChange(event) {
+				dbg("input device change detected: %s %s", event.Op, event.Name)
+				resetTimer(keyboardDebounce, 500*time.Millisecond)
 			}
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				return nil
 			}
 			fmt.Fprintf(os.Stderr, "texpand: watch error: %v\n", err)
+		case <-sigCh:
+			fmt.Println("\ntexpand: shutting down")
+			for _, mon := range keyboardMonitors {
+				mon.dev.Close()
+			}
+			return nil
 		}
 	}
+}
+
+func newStoppedTimer() *time.Timer {
+	timer := time.NewTimer(time.Hour)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	return timer
+}
+
+func resetTimer(timer *time.Timer, d time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(d)
 }
 
 // isRelevantChange returns true if the fsnotify event represents a
@@ -240,6 +287,13 @@ func isRelevantChange(event fsnotify.Event) bool {
 		return false
 	}
 	return strings.HasSuffix(event.Name, ".yml")
+}
+
+func isInputDeviceChange(event fsnotify.Event) bool {
+	if event.Op&(fsnotify.Create|fsnotify.Remove|fsnotify.Rename|fsnotify.Chmod) == 0 {
+		return false
+	}
+	return filepath.Dir(event.Name) == "/dev/input" && strings.HasPrefix(filepath.Base(event.Name), "event")
 }
 
 func main() {
